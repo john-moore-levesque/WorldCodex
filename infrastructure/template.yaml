@@ -1,0 +1,1028 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Codex SAM template
+#
+# This stack assumes you have:
+#   1. A domain you own with a Route53 hosted zone in the same AWS account
+#      (RootDomain + HostedZoneId parameters).
+#   2. A Google OAuth 2.0 app — get GoogleClientId/GoogleClientSecret from
+#      https://console.cloud.google.com/apis/credentials.
+#
+# If you don't want a custom domain, the simplest path is to delete the
+# CodexSSLCert, CodexCloudFrontDistribution, CodexRecordSetGroup, and
+# CodexApiDomainName resources and just consume the raw API Gateway URL.
+# ─────────────────────────────────────────────────────────────────────────────
+
+Parameters:
+  WorldName:
+    AllowedPattern: '[a-z0-9-.]+'
+    Description: Short slug for this world/universe (e.g. "scifi", "fantasy-west"). Used in table names and the per-world subdomain.
+    Type: String
+
+  GoogleClientId:
+    AllowedPattern: '[a-zA-Z0-9.\-_]+'
+    Description: Google OAuth 2.0 Client ID
+    Type: String
+
+  GoogleClientSecret:
+    AllowedPattern: '[a-zA-Z0-9.\-_]+'
+    Description: Google OAuth 2.0 Client Secret
+    Type: String
+
+  RootDomain:
+    Type: String
+    Description: Root domain you own (e.g. "example.com"). Per-world subdomains are derived as ${WorldName}.${RootDomain}.
+
+  HostedZoneId:
+    Type: String
+    Description: Route53 hosted zone ID for RootDomain (find it in the Route53 console; starts with "Z")
+
+  IsRootWorld:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Whether this world owns the RootDomain apex (i.e. example.com points here, not just myworld.example.com)
+
+  CognitoHostedUIDomain:
+    Type: String
+    Description: Cognito hosted UI domain prefix (e.g. "myapp" produces myapp.auth.us-east-1.amazoncognito.com)
+
+  ApiDomainName:
+    Type: String
+    Description: API Gateway custom domain (e.g. api.example.com or myworld-api.example.com)
+
+Conditions:
+  IsRootWorldCondition: !Equals [!Ref IsRootWorld, "true"]
+
+Description: |
+  SAM template for creating Codex worldbuilding app
+
+Globals:
+  # https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-specification-template-anatomy-globals.html
+  Function:
+    Timeout: 5
+    MemorySize: 128
+    Runtime: python3.14
+
+    Tracing: Active
+    # You can add LoggingConfig parameters such as the Logformat, Log Group, and SystemLogLevel or ApplicationLogLevel. Learn more here https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-function.html#sam-function-loggingconfig.
+    LoggingConfig:
+      LogFormat: JSON
+  Api:
+    TracingEnabled: true
+
+Resources:
+
+  ##############
+  # Networking #
+  ##############
+  # SSL
+  CodexSSLCert:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref RootDomain
+      SubjectAlternativeNames:
+        - !Sub '*.${RootDomain}'
+      ValidationMethod: DNS
+
+  # CloudFront
+  CodexCloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CodexSSLCert
+          SslSupportMethod: sni-only
+        DefaultRootObject: index.html
+        DefaultCacheBehavior:
+          TargetOriginId: CodexCDN
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        CacheBehaviors:
+          - PathPattern: images/*
+            TargetOriginId: CodexImagesCDN
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - GET
+              - HEAD
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        Aliases: !If
+          - IsRootWorldCondition
+          - - !Ref RootDomain
+            - !Sub ${WorldName}.${RootDomain}
+          - - !Sub ${WorldName}.${RootDomain}
+        # Client-side routing (BrowserRouter): any deep URL that S3 doesn't
+        # have a matching object for must serve index.html so the SPA can
+        # take over. Without this, /locations/sol would 404 on refresh.
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+        Enabled: true
+        Origins:
+          - DomainName: !GetAtt CodexFrontEndBucket.RegionalDomainName
+            Id: CodexCDN
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub
+                - origin-access-identity/cloudfront/${OriginAccessIdentity}
+                - OriginAccessIdentity: !Ref CodexCloudFormationOriginAccessIdentity
+          - DomainName: !GetAtt CodexImagesBucket.RegionalDomainName
+            Id: CodexImagesCDN
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub
+                - origin-access-identity/cloudfront/${OriginAccessIdentity}
+                - OriginAccessIdentity: !Ref CodexCloudFormationOriginAccessIdentity
+
+  CodexFrontEndBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-codexfrontend-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+
+  CodexFrontEndBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CodexFrontEndBucket
+      PolicyDocument:
+        Id: RequireEncryptionInTransit
+        Version: '2012-10-17'
+        Statement:
+          - Principal: '*'
+            Action: '*'
+            Effect: Deny
+            Resource:
+              - !GetAtt CodexFrontEndBucket.Arn
+              - !Sub ${CodexFrontEndBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+          - Action: s3:getObject
+            Effect: Allow
+            Resource:
+              - !Sub ${CodexFrontEndBucket.Arn}/*
+            Principal:
+              CanonicalUser: !GetAtt CodexCloudFormationOriginAccessIdentity.S3CanonicalUserId
+
+  CodexCloudFormationOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: CodexCDN
+
+  CodexRecordSetGroup:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      Comment: Codex app Route53 records
+      HostedZoneId: !Ref HostedZoneId
+      RecordSets:
+        - !If
+          - IsRootWorldCondition
+          - Name: !Ref RootDomain
+            Type: A
+            AliasTarget:
+              DNSName: !GetAtt CodexCloudFrontDistribution.DomainName
+              HostedZoneId: Z2FDTNDATAQYW2
+          - !Ref AWS::NoValue
+        - !If
+          - IsRootWorldCondition
+          - Name: !Ref RootDomain
+            Type: AAAA
+            AliasTarget:
+              DNSName: !GetAtt CodexCloudFrontDistribution.DomainName
+              HostedZoneId: Z2FDTNDATAQYW2
+          - !Ref AWS::NoValue
+        - Name: !Sub ${WorldName}.${RootDomain}
+          Type: A
+          AliasTarget:
+            DNSName: !GetAtt CodexCloudFrontDistribution.DomainName
+            HostedZoneId: Z2FDTNDATAQYW2
+        - Name: !Sub ${WorldName}.${RootDomain}
+          Type: AAAA
+          AliasTarget:
+            DNSName: !GetAtt CodexCloudFrontDistribution.DomainName
+            HostedZoneId: Z2FDTNDATAQYW2
+        - Name: !Ref ApiDomainName
+          Type: A
+          AliasTarget:
+            DNSName: !GetAtt CodexApiDomainName.RegionalDomainName
+            HostedZoneId: !GetAtt CodexApiDomainName.RegionalHostedZoneId
+
+  #############
+  # Codex API #
+  #############
+  # API Domain Name
+  CodexApiDomainName:
+    Type: AWS::ApiGateway::DomainName
+    Properties:
+      DomainName: !Ref ApiDomainName
+      RegionalCertificateArn: !Ref CodexSSLCert
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # API Base Path Mapping
+  CodexApiBasePathMapping:
+    Type: AWS::ApiGateway::BasePathMapping
+    DependsOn: CodexApiProdStage
+    Properties:
+      DomainName: !Ref CodexApiDomainName
+      RestApiId: !Ref CodexApi
+      Stage: Prod
+
+  # API
+  CodexApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub
+        - ${ResourceName} From Stack ${AWS::StackName}
+        - ResourceName: !Sub codex-${WorldName}-api
+      StageName: Prod
+      DefinitionBody:
+        openapi: '3.0'
+        info: {}
+        paths:
+          /overview:
+            get:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+            put:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+          /lore:
+            get:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+            put:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+          /timeline:
+            get:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+            put:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+          /species:
+            get:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+            put:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+          /factions:
+            get:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+            put:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+          /technology:
+            put:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+            get:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+          /locations:
+            get:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+            put:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+          /characters:
+            get:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+            put:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+          /stories:
+            get:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+            put:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+          /images/upload:
+            post:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Codex.Arn}/invocations
+              responses: {}
+      EndpointConfiguration: REGIONAL
+      TracingEnabled: true
+      Cors:
+        AllowOrigin: '''*'''
+        AllowHeaders: '''Authorization, X-Amz-Date, X-Amz-Security-Token, Content-Type, x-amz-content-sha256'''
+        AllowMethods: '''GET,PUT,POST'''
+        MaxAge: 600
+      Auth:
+        DefaultAuthorizer: AWS_IAM
+        AddDefaultAuthorizerToCorsPreflight: false
+
+  ##################
+  # Codex DynamoDB #
+  ##################
+  # Overview DynamoDB Table
+  OverviewDynamoDB:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub codex-${WorldName}-overview
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  # Lore DynamoDB Table
+  LoreDynamoDB:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub codex-${WorldName}-lore
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  # Timeline DynamoDB Table
+  TimelineDynamoDB:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub codex-${WorldName}-timeline
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  # Factions DynamoDB table
+  FactionsDynamoDB:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub codex-${WorldName}-factions
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  # Technology DynamoDB table
+  TechnologyDynamoDB:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub codex-${WorldName}-technology
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  # Species DynamoDB Table
+  SpeciesDynamoDB:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub codex-${WorldName}-species
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  # Locations DynamoDB Table
+  LocationsDynamoDB:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub codex-${WorldName}-locations
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  # Characters DynamoDB Table
+  CharactersDynamoDB:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub codex-${WorldName}-characters
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  # Stories DynamoDB Table
+  StoriesDynamoDB:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub codex-${WorldName}-stories
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  #################
+  # Codex Lambdas #
+  #################
+  # Main Lambda
+  Codex:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: !Sub
+        - Stack ${AWS::StackName} Function ${ResourceName}
+        - ResourceName: !Sub Codex-${WorldName}-Lambda
+      CodeUri: ../src/
+      Handler: app.codexHandler
+      Runtime: python3.14
+      MemorySize: 3008
+      Timeout: 30
+      Layers:
+        - !Sub arn:aws:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV3-python314-x86_64:32
+      Tracing: Active
+      Environment:
+        Variables:
+          TIMELINE_TABLE_NAME: !Ref TimelineDynamoDB
+          TIMELINE_TABLE_ARN: !GetAtt TimelineDynamoDB.Arn
+          FACTIONS_TABLE_NAME: !Ref FactionsDynamoDB
+          FACTIONS_TABLE_ARN: !GetAtt FactionsDynamoDB.Arn
+          TECHNOLOGY_TABLE_NAME: !Ref TechnologyDynamoDB
+          TECHNOLOGY_TABLE_ARN: !GetAtt TechnologyDynamoDB.Arn
+          SPECIES_TABLE_NAME: !Ref SpeciesDynamoDB
+          SPECIES_TABLE_ARN: !GetAtt SpeciesDynamoDB.Arn
+          LOCATIONS_TABLE_NAME: !Ref LocationsDynamoDB
+          LOCATIONS_TABLE_ARN: !GetAtt LocationsDynamoDB.Arn
+          OVERVIEW_TABLE_NAME: !Ref OverviewDynamoDB
+          OVERVIEW_TABLE_ARN: !GetAtt OverviewDynamoDB.Arn
+          LORE_TABLE_NAME: !Ref LoreDynamoDB
+          LORE_TABLE_ARN: !GetAtt LoreDynamoDB.Arn
+          CHARACTERS_TABLE_NAME: !Ref CharactersDynamoDB
+          CHARACTERS_TABLE_ARN: !GetAtt CharactersDynamoDB.Arn
+          STORIES_TABLE_NAME: !Ref StoriesDynamoDB
+          STORIES_TABLE_ARN: !GetAtt StoriesDynamoDB.Arn
+          WORLD: !Sub ${WorldName}
+          CODEXIMAGEBUCKET_BUCKET_NAME: !Ref CodexImagesBucket
+          CLOUDFRONT_DOMAIN: !GetAtt CodexCloudFrontDistribution.DomainName
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TimelineDynamoDB
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FactionsDynamoDB
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TechnologyDynamoDB
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SpeciesDynamoDB
+        - DynamoDBCrudPolicy:
+            TableName: !Ref OverviewDynamoDB
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LocationsDynamoDB
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LoreDynamoDB
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CharactersDynamoDB
+        - DynamoDBCrudPolicy:
+            TableName: !Ref StoriesDynamoDB
+        - S3WritePolicy:
+            BucketName: !Ref CodexImagesBucket
+      Events:
+        ApiGEToverview:
+          Type: Api
+          Properties:
+            Path: /overview
+            Method: GET
+            RestApiId: !Ref CodexApi
+        ApiPUToverview:
+          Type: Api
+          Properties:
+            Path: /overview
+            Method: PUT
+            RestApiId: !Ref CodexApi
+        ApiGETlore:
+          Type: Api
+          Properties:
+            Path: /lore
+            Method: GET
+            RestApiId: !Ref CodexApi
+        ApiPUTlore:
+          Type: Api
+          Properties:
+            Path: /lore
+            Method: PUT
+            RestApiId: !Ref CodexApi
+        ApiGETtimeline:
+          Type: Api
+          Properties:
+            Path: /timeline
+            Method: GET
+            RestApiId: !Ref CodexApi
+        ApiPUTtimeline:
+          Type: Api
+          Properties:
+            Path: /timeline
+            Method: PUT
+            RestApiId: !Ref CodexApi
+        ApiGETspecies:
+          Type: Api
+          Properties:
+            Path: /species
+            Method: GET
+            RestApiId: !Ref CodexApi
+        ApiPUTspecies:
+          Type: Api
+          Properties:
+            Path: /species
+            Method: PUT
+            RestApiId: !Ref CodexApi
+        ApiGETfactions:
+          Type: Api
+          Properties:
+            Path: /factions
+            Method: GET
+            RestApiId: !Ref CodexApi
+        ApiPUTfactions:
+          Type: Api
+          Properties:
+            Path: /factions
+            Method: PUT
+            RestApiId: !Ref CodexApi
+        ApiPUTtechnology:
+          Type: Api
+          Properties:
+            Path: /technology
+            Method: PUT
+            RestApiId: !Ref CodexApi
+        ApiGETtechnology:
+          Type: Api
+          Properties:
+            Path: /technology
+            Method: GET
+            RestApiId: !Ref CodexApi
+        ApiGETlocations:
+          Type: Api
+          Properties:
+            Path: /locations
+            Method: GET
+            RestApiId: !Ref CodexApi
+        ApiPUTlocations:
+          Type: Api
+          Properties:
+            Path: /locations
+            Method: PUT
+            RestApiId: !Ref CodexApi
+        ApiGETcharacters:
+          Type: Api
+          Properties:
+            Path: /characters
+            Method: GET
+            RestApiId: !Ref CodexApi
+        ApiPUTcharacters:
+          Type: Api
+          Properties:
+            Path: /characters
+            Method: PUT
+            RestApiId: !Ref CodexApi
+        ApiGETstories:
+          Type: Api
+          Properties:
+            Path: /stories
+            Method: GET
+            RestApiId: !Ref CodexApi
+        ApiPUTstories:
+          Type: Api
+          Properties:
+            Path: /stories
+            Method: PUT
+            RestApiId: !Ref CodexApi
+        ApiPOSTimagesupload:
+          Type: Api
+          Properties:
+            Path: /images/upload
+            Method: POST
+            RestApiId: !Ref CodexApi
+
+  # Codex Lambda Log Group
+  CodexLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${Codex}
+      RetentionInDays: 30
+
+  # Codex Backup Lambda
+  CodexBackup:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: !Sub
+        - Stack ${AWS::StackName} Function ${ResourceName}
+        - ResourceName: CodexBackup
+      CodeUri: ../src/
+      Handler: app.codexBackupHandler
+      Runtime: python3.14
+      MemorySize: 3008
+      Timeout: 30
+      Tracing: Active
+      Events:
+        CloudWatchEvent:
+          Type: ScheduleV2
+          Properties:
+            Name: !Sub codex-${WorldName}-backup-event
+            ScheduleExpression: cron(0 0 ? * SUN *) # weekly on Sunday
+      Layers:
+        - !Sub arn:aws:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV3-python314-x86_64:32
+      Environment:
+        Variables:
+          CODEXBACKUPBUCKET_BUCKET_NAME: !Ref CodexBackupBucket
+          CODEXBACKUPBUCKET_BUCKET_ARN: !GetAtt CodexBackupBucket.Arn
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref TimelineDynamoDB
+        - DynamoDBReadPolicy:
+            TableName: !Ref FactionsDynamoDB
+        - DynamoDBReadPolicy:
+            TableName: !Ref TechnologyDynamoDB
+        - DynamoDBReadPolicy:
+            TableName: !Ref SpeciesDynamoDB
+        - DynamoDBReadPolicy:
+            TableName: !Ref LocationsDynamoDB
+        - DynamoDBReadPolicy:
+            TableName: !Ref OverviewDynamoDB
+        - DynamoDBReadPolicy:
+            TableName: !Ref LoreDynamoDB
+        - DynamoDBReadPolicy:
+            TableName: !Ref CharactersDynamoDB
+        - DynamoDBReadPolicy:
+            TableName: !Ref StoriesDynamoDB
+        - S3WritePolicy:
+            BucketName: !Ref CodexBackupBucket
+
+  # Codex Backup Lambda Log Group
+  CodexBackupLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${CodexBackup}
+      RetentionInDays: 30
+
+  ################
+  # Codex Backup #
+  ################
+  # S3 bucket
+  CodexBackupBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-codexback-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: alias/aws/s3
+      PublicAccessBlockConfiguration:
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+
+  # Images S3 bucket
+  CodexImagesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-codeximg-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - PUT
+              - GET
+            AllowedOrigins:
+              - '*'
+            MaxAge: 3600
+
+  # Images S3 bucket policy
+  CodexImagesBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CodexImagesBucket
+      PolicyDocument:
+        Id: RequireEncryptionInTransit
+        Version: '2012-10-17'
+        Statement:
+          - Principal: '*'
+            Action: '*'
+            Effect: Deny
+            Resource:
+              - !GetAtt CodexImagesBucket.Arn
+              - !Sub ${CodexImagesBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+          - Action: s3:GetObject
+            Effect: Allow
+            Resource: !Sub ${CodexImagesBucket.Arn}/*
+            Principal:
+              CanonicalUser: !GetAtt CodexCloudFormationOriginAccessIdentity.S3CanonicalUserId
+
+  # S3 bucket policy
+  CodexBackupBucketBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CodexBackupBucket
+      PolicyDocument:
+        Id: RequireEncryptionInTransit
+        Version: '2012-10-17'
+        Statement:
+          - Principal: '*'
+            Action: '*'
+            Effect: Deny
+            Resource:
+              - !GetAtt CodexBackupBucket.Arn
+              - !Sub ${CodexBackupBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+
+  ###########
+  # Cognito #
+  ###########
+  CodexUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: CodexGoogleAuthPool
+
+  CodexGoogleIdentityProvider:
+    Type: AWS::Cognito::UserPoolIdentityProvider
+    Properties:
+      UserPoolId: !Ref CodexUserPool
+      ProviderName: Google
+      ProviderType: Google
+      ProviderDetails:
+        client_id: !Sub "${GoogleClientId}"
+        client_secret: !Sub "${GoogleClientSecret}"
+        authorize_scopes: email profile openid
+      AttributeMapping:
+        email: email
+
+  CodexUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: CodexGoogleIdentityProvider
+    Properties:
+      UserPoolId: !Ref CodexUserPool
+      AllowedOAuthFlowsUserPoolClient: true
+      SupportedIdentityProviders:
+        - Google
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - email
+        - openid
+        - profile
+      CallbackURLs: !If
+        - IsRootWorldCondition
+        - - http://localhost:3000
+          - !Sub https://${RootDomain}
+          - !Sub https://${WorldName}.${RootDomain}
+        - - http://localhost:3000
+          - !Sub https://${WorldName}.${RootDomain}
+      LogoutURLs: !If
+        - IsRootWorldCondition
+        - - !Sub https://${RootDomain}
+          - !Sub https://${WorldName}.${RootDomain}
+        - - !Sub https://${WorldName}.${RootDomain}
+
+  CodexUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref CodexUserPool
+      Domain: !Ref CognitoHostedUIDomain
+
+  CodexIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: CodexIdentityPool
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref CodexUserPoolClient
+          ProviderName: !GetAtt CodexUserPool.ProviderName
+
+  CodexAuthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud: !Ref CodexIdentityPool
+              ForAnyValue:StringLike:
+                cognito-identity.amazonaws.com:amr: authenticated
+      Policies:
+        - PolicyName: CodexApiAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: execute-api:Invoke
+                Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${CodexApi}/*
+
+  CodexIdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref CodexIdentityPool
+      Roles:
+        authenticated: !GetAtt CodexAuthenticatedRole.Arn
+
+  CodexGatewayResponse4XX:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref CodexApi
+      ResponseType: DEFAULT_4XX
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Authorization,X-Amz-Date,X-Amz-Security-Token,Content-Type'"
+
+  CodexGatewayResponseAccessDenied:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref CodexApi
+      ResponseType: ACCESS_DENIED
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Authorization,X-Amz-Date,X-Amz-Security-Token,Content-Type'"
+
+  CodexGatewayResponseUnauthorized:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref CodexApi
+      ResponseType: UNAUTHORIZED
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Authorization,X-Amz-Date,X-Amz-Security-Token,Content-Type'"

@@ -1,0 +1,15 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "codex-world-app"
+resolve_s3 = true
+s3_prefix = "codex-world-app"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+disable_rollback = true
+parameter_overrides = "WorldName=\"WorldName\" GoogleClientId=\"your-id-here\" GoogleClientSecret=\"your-secret-here\""
+image_repositories = []
+
+[default.global.parameters]
+region = "us-east-1"

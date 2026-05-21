@@ -1,0 +1,17 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+aws-lambda-powertools = "*"
+requests = "*"
+pytest = "*"
+pytest-coverage = "*"
+aws-xray-sdk = "*"
+moto = "*"
+
+[dev-packages]
+
+[requires]
+python_version = "3.14"

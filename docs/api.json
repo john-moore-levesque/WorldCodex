@@ -1,0 +1,440 @@
+{
+  "contract": {
+    "name": "Codex API",
+    "version": "0.3",
+    "lastUpdated": "2026-04-20",
+    "description": "API contract for Codex, a general-purpose worldbuilding toolkit. Each world gets its own SAM stack with five modules."
+  },
+  "conventions": {
+    "auth": {
+      "method": "API key",
+      "header": "x-api-key"
+    },
+    "contentType": "application/json",
+    "timestamps": "ISO 8601 UTC",
+    "concurrency": {
+      "strategy": "optimistic",
+      "description": "Client sends expectedVersion (the version it last received from GET) on every PUT. Backend returns 409 if stored version doesn't match. On success, backend increments version and returns the new value.",
+      "versionStart": 1,
+      "conditionExpression": "attribute_not_exists(pk) OR version = :expectedVersion"
+    },
+    "naming": {
+      "tablePattern": "codex-{world}-{module}",
+      "stackPattern": "codex-{world}",
+      "worldParam": {
+        "name": "WorldName",
+        "type": "String",
+        "allowedPattern": "[a-z0-9-]+"
+      }
+    }
+  },
+  "errors": {
+    "shape": {
+      "error": "string (error_code)",
+      "message": "string (human-readable)"
+    },
+    "codes": {
+      "not_found": { "httpStatus": 404, "description": "No data exists yet for this module" },
+      "bad_request": { "httpStatus": 400, "description": "Malformed request body, missing fields, or invalid JSON" },
+      "version_conflict": {
+        "httpStatus": 409,
+        "description": "Stored version is newer than expectedVersion",
+        "additionalFields": { "storedVersion": "integer" }
+      },
+      "internal_error": { "httpStatus": 500, "description": "Unexpected backend error" }
+    }
+  },
+  "crossModuleLinks": {
+    "fieldName": "crossModuleLinks",
+    "description": "Generic cross-module references. Directional in data, rendered bidirectionally by frontend. Distinct from module-specific relationship fields (connections, prerequisites, allies, enemies, parentFaction, parent).",
+    "validTypes": ["event", "faction", "species", "tech", "location"],
+    "shape": {
+      "type": "string (one of validTypes)",
+      "id": "string (uid of target entity)"
+    }
+  },
+  "modules": {
+    "timeline": {
+      "name": "Timeline",
+      "tableSuffix": "timeline",
+      "collectionKey": "events",
+      "additionalCollections": {
+        "eras": {
+          "description": "Time periods displayed as background bands on the timeline"
+        }
+      },
+      "dataShapes": {
+        "event": {
+          "id": { "type": "string", "description": "Unique identifier" },
+          "year": { "type": "integer", "description": "Year the event occurs" },
+          "sortOrder": { "type": "integer", "description": "Order within the same year", "default": 0 },
+          "title": { "type": "string", "required": true },
+          "summary": { "type": "string", "description": "One-line summary" },
+          "detail": { "type": "string", "description": "Full lore entry, long-form" },
+          "category": {
+            "type": "enum",
+            "values": ["political", "technology", "military", "exploration", "science", "cultural"],
+            "description": "Hardcoded enum for UI filtering"
+          },
+          "faction": { "type": "string|null", "description": "Nullable faction ID referencing a Factions module entity. null for unaligned events." },
+          "crossModuleLinks": { "type": "array", "items": "CrossModuleLink" }
+        },
+        "era": {
+          "id": { "type": "string", "description": "Unique identifier" },
+          "startYear": { "type": "integer" },
+          "endYear": { "type": "integer" },
+          "label": { "type": "string" },
+          "color": { "type": "string", "format": "#RRGGBB" },
+          "track": { "type": "integer|undefined", "description": "Optional explicit track placement. If omitted, frontend assigns based on overlap detection." }
+        }
+      },
+      "endpoints": {
+        "GET /timeline": {
+          "response200": {
+            "events": "Event[]",
+            "eras": "Era[]",
+            "updatedAt": "string (ISO 8601)",
+            "version": "integer"
+          },
+          "response404": "No timeline data yet"
+        },
+        "PUT /timeline": {
+          "requestBody": {
+            "events": "Event[]",
+            "eras": "Era[]",
+            "expectedVersion": "integer"
+          },
+          "response200": {
+            "success": true,
+            "updatedAt": "string (ISO 8601)",
+            "version": "integer"
+          },
+          "response400": "Malformed request",
+          "response409": "Version conflict",
+          "response500": "Internal error"
+        }
+      },
+      "dynamodb": {
+        "tableName": "codex-{world}-timeline",
+        "partitionKey": { "name": "pk", "type": "S" },
+        "sortKey": null,
+        "billingMode": "PAY_PER_REQUEST",
+        "singleItemKey": "default",
+        "attributes": {
+          "events": "L (List of Maps)",
+          "eras": "L (List of Maps)",
+          "version": "N (Number)",
+          "updatedAt": "S (String)"
+        }
+      }
+    },
+    "species": {
+      "name": "Species",
+      "tableSuffix": "species",
+      "collectionKey": "species",
+      "dataShapes": {
+        "species": {
+          "id": { "type": "string", "description": "Unique identifier" },
+          "name": { "type": "string", "required": true },
+          "classification": { "type": "string", "description": "Free-text taxonomic description" },
+          "homeworld": { "type": "string", "description": "Free-text name. Cross-link to location via crossModuleLinks." },
+          "physiology": { "type": "string", "description": "Long-form lore field, optional" },
+          "culture": { "type": "string", "description": "Long-form lore field, optional" },
+          "history": { "type": "string", "description": "Long-form lore field, optional" },
+          "traits": { "type": "array", "items": "string", "description": "Short descriptive tags for filtering (e.g., telepathic, silicon-based)" },
+          "status": {
+            "type": "enum",
+            "values": ["extant", "endangered", "extinct", "unknown"]
+          },
+          "crossModuleLinks": { "type": "array", "items": "CrossModuleLink" }
+        }
+      },
+      "endpoints": {
+        "GET /species": {
+          "response200": {
+            "species": "Species[]",
+            "updatedAt": "string (ISO 8601)",
+            "version": "integer"
+          },
+          "response404": "No species data yet"
+        },
+        "PUT /species": {
+          "requestBody": {
+            "species": "Species[]",
+            "expectedVersion": "integer"
+          },
+          "response200": {
+            "success": true,
+            "updatedAt": "string (ISO 8601)",
+            "version": "integer"
+          },
+          "response400": "Malformed request",
+          "response409": "Version conflict",
+          "response500": "Internal error"
+        }
+      },
+      "dynamodb": {
+        "tableName": "codex-{world}-species",
+        "partitionKey": { "name": "pk", "type": "S" },
+        "sortKey": null,
+        "billingMode": "PAY_PER_REQUEST",
+        "singleItemKey": "default",
+        "attributes": {
+          "species": "L (List of Maps)",
+          "version": "N (Number)",
+          "updatedAt": "S (String)"
+        }
+      }
+    },
+    "factions": {
+      "name": "Factions",
+      "tableSuffix": "factions",
+      "collectionKey": "factions",
+      "dataShapes": {
+        "faction": {
+          "id": { "type": "string", "description": "Unique identifier" },
+          "name": { "type": "string", "required": true },
+          "shortName": { "type": "string", "description": "Abbreviation for compact display (e.g., UEG)" },
+          "color": { "type": "string", "format": "#RRGGBB", "description": "Used for UI theming, timeline eras, location display" },
+          "type": {
+            "type": "enum",
+            "values": ["government", "corporation", "military", "religious", "insurgent", "criminal", "other"]
+          },
+          "motto": { "type": "string", "description": "Optional" },
+          "description": { "type": "string", "description": "Long-form lore field, optional" },
+          "history": { "type": "string", "description": "Long-form lore field, optional" },
+          "territory": { "type": "string", "description": "Long-form lore field, optional" },
+          "leadership": { "type": "string", "description": "Long-form lore field, optional" },
+          "species": {
+            "type": "array",
+            "items": "species-id",
+            "description": "Optional multi-select list of species IDs. A faction can be multi-species or empty."
+          },
+          "status": {
+            "type": "enum",
+            "values": ["active", "dissolved", "underground", "unknown"]
+          },
+          "parentFaction": { "type": "string|null", "description": "Nullable faction ID for hierarchical relationships" },
+          "allies": {
+            "type": "array",
+            "items": "faction-id",
+            "description": "One-directional. Asymmetric relationships are valid (A allies B, B enemies A)."
+          },
+          "enemies": {
+            "type": "array",
+            "items": "faction-id",
+            "description": "One-directional. Frontend renders on both sides regardless."
+          },
+          "crossModuleLinks": { "type": "array", "items": "CrossModuleLink" }
+        }
+      },
+      "endpoints": {
+        "GET /factions": {
+          "response200": {
+            "factions": "Faction[]",
+            "updatedAt": "string (ISO 8601)",
+            "version": "integer"
+          },
+          "response404": "No faction data yet"
+        },
+        "PUT /factions": {
+          "requestBody": {
+            "factions": "Faction[]",
+            "expectedVersion": "integer"
+          },
+          "response200": {
+            "success": true,
+            "updatedAt": "string (ISO 8601)",
+            "version": "integer"
+          },
+          "response400": "Malformed request",
+          "response409": "Version conflict",
+          "response500": "Internal error"
+        }
+      },
+      "dynamodb": {
+        "tableName": "codex-{world}-factions",
+        "partitionKey": { "name": "pk", "type": "S" },
+        "sortKey": null,
+        "billingMode": "PAY_PER_REQUEST",
+        "singleItemKey": "default",
+        "attributes": {
+          "factions": "L (List of Maps)",
+          "version": "N (Number)",
+          "updatedAt": "S (String)"
+        }
+      }
+    },
+    "technology": {
+      "name": "Technology",
+      "tableSuffix": "technology",
+      "collectionKey": "technology",
+      "dataShapes": {
+        "technology": {
+          "id": { "type": "string", "description": "Unique identifier" },
+          "name": { "type": "string", "required": true },
+          "category": {
+            "type": "enum",
+            "values": ["propulsion", "weapons", "energy", "computing", "biotech", "materials", "communications", "other"]
+          },
+          "tier": { "type": "string", "description": "Free-text maturity/advancement label (e.g., Tier 3 — Interstellar)" },
+          "inventor": { "type": "string", "description": "Free-text. Cross-link to faction/species via crossModuleLinks." },
+          "yearInvented": { "type": "integer|null", "description": "Nullable. Enables timeline placement." },
+          "yearObsoleted": { "type": "integer|null", "description": "Nullable." },
+          "summary": { "type": "string", "description": "Brief description" },
+          "principles": { "type": "string", "description": "Long-form lore field, optional" },
+          "limitations": { "type": "string", "description": "Long-form lore field, optional" },
+          "impact": { "type": "string", "description": "Long-form lore field, optional" },
+          "status": {
+            "type": "enum",
+            "values": ["theoretical", "experimental", "operational", "widespread", "obsolete", "lost"]
+          },
+          "prerequisites": {
+            "type": "array",
+            "items": "tech-id",
+            "description": "Direct dependency chain for tech tree rendering. Distinct from crossModuleLinks with type=tech, which represents adjacency/relatedness without dependency."
+          },
+          "crossModuleLinks": { "type": "array", "items": "CrossModuleLink" }
+        }
+      },
+      "endpoints": {
+        "GET /technology": {
+          "response200": {
+            "technology": "Technology[]",
+            "updatedAt": "string (ISO 8601)",
+            "version": "integer"
+          },
+          "response404": "No technology data yet"
+        },
+        "PUT /technology": {
+          "requestBody": {
+            "technology": "Technology[]",
+            "expectedVersion": "integer"
+          },
+          "response200": {
+            "success": true,
+            "updatedAt": "string (ISO 8601)",
+            "version": "integer"
+          },
+          "response400": "Malformed request",
+          "response409": "Version conflict",
+          "response500": "Internal error"
+        }
+      },
+      "dynamodb": {
+        "tableName": "codex-{world}-technology",
+        "partitionKey": { "name": "pk", "type": "S" },
+        "sortKey": null,
+        "billingMode": "PAY_PER_REQUEST",
+        "singleItemKey": "default",
+        "attributes": {
+          "technology": "L (List of Maps)",
+          "version": "N (Number)",
+          "updatedAt": "S (String)"
+        }
+      }
+    },
+    "locations": {
+      "name": "Locations",
+      "tableSuffix": "locations",
+      "collectionKey": "locations",
+      "description": "Text-and-data catalog of places. No coordinates or visual layout — rendering layer decides positioning if/when it exists.",
+      "dataShapes": {
+        "location": {
+          "id": { "type": "string", "description": "Unique identifier" },
+          "name": { "type": "string", "required": true },
+          "type": {
+            "type": "enum",
+            "values": ["star-system", "planet", "moon", "station", "city", "region", "other"]
+          },
+          "parent": { "type": "string|null", "description": "Nullable location ID for hierarchical containment (e.g., planet inside star system)" },
+          "description": { "type": "string", "description": "Long-form description, optional" },
+          "properties": { "type": "string", "description": "Free-text physical/notable characteristics (e.g., Class M atmosphere, 1.1g gravity)" },
+          "history": { "type": "string", "description": "Long-form historical notes, optional" },
+          "status": {
+            "type": "enum",
+            "values": ["inhabited", "uninhabited", "contested", "destroyed", "unknown"]
+          },
+          "tags": { "type": "array", "items": "string", "description": "Short labels for filtering (e.g., capital, mining colony)" },
+          "connections": {
+            "type": "array",
+            "items": "Connection",
+            "description": "Transit/adjacency relationships to other locations. Directional in data, rendered bidirectionally by frontend. Distinct from crossModuleLinks."
+          },
+          "crossModuleLinks": { "type": "array", "items": "CrossModuleLink" }
+        },
+        "connection": {
+          "to": { "type": "string", "description": "Target location ID" },
+          "label": { "type": "string", "description": "Name of the route/connection" },
+          "connectionType": {
+            "type": "enum",
+            "values": ["warp-lane", "trade-route", "political-border", "orbit", "hyperspace", "other"]
+          },
+          "distance": { "type": "string|undefined", "description": "Optional free-text (e.g., 4.37 ly, 200 km). Units vary by universe." },
+          "travelTime": { "type": "string|undefined", "description": "Optional free-text (e.g., 14 days at standard warp)" },
+          "detail": { "type": "string", "description": "Optional flavor text" }
+        }
+      },
+      "endpoints": {
+        "GET /locations": {
+          "response200": {
+            "locations": "Location[]",
+            "updatedAt": "string (ISO 8601)",
+            "version": "integer"
+          },
+          "response404": "No location data yet"
+        },
+        "PUT /locations": {
+          "requestBody": {
+            "locations": "Location[]",
+            "expectedVersion": "integer"
+          },
+          "response200": {
+            "success": true,
+            "updatedAt": "string (ISO 8601)",
+            "version": "integer"
+          },
+          "response400": "Malformed request",
+          "response409": "Version conflict",
+          "response500": "Internal error"
+        }
+      },
+      "dynamodb": {
+        "tableName": "codex-{world}-locations",
+        "partitionKey": { "name": "pk", "type": "S" },
+        "sortKey": null,
+        "billingMode": "PAY_PER_REQUEST",
+        "singleItemKey": "default",
+        "attributes": {
+          "locations": "L (List of Maps)",
+          "version": "N (Number)",
+          "updatedAt": "S (String)"
+        }
+      }
+    }
+  },
+  "routes": [
+    { "method": "GET", "path": "/timeline", "table": "codex-{world}-timeline" },
+    { "method": "PUT", "path": "/timeline", "table": "codex-{world}-timeline" },
+    { "method": "GET", "path": "/species", "table": "codex-{world}-species" },
+    { "method": "PUT", "path": "/species", "table": "codex-{world}-species" },
+    { "method": "GET", "path": "/factions", "table": "codex-{world}-factions" },
+    { "method": "PUT", "path": "/factions", "table": "codex-{world}-factions" },
+    { "method": "GET", "path": "/technology", "table": "codex-{world}-technology" },
+    { "method": "PUT", "path": "/technology", "table": "codex-{world}-technology" },
+    { "method": "GET", "path": "/locations", "table": "codex-{world}-locations" },
+    { "method": "PUT", "path": "/locations", "table": "codex-{world}-locations" }
+  ],
+  "iamPermissions": {
+    "lambda": {
+      "actions": ["dynamodb:GetItem", "dynamodb:PutItem"],
+      "resources": [
+        "arn:aws:dynamodb:us-east-1:*:table/codex-{world}-timeline",
+        "arn:aws:dynamodb:us-east-1:*:table/codex-{world}-species",
+        "arn:aws:dynamodb:us-east-1:*:table/codex-{world}-factions",
+        "arn:aws:dynamodb:us-east-1:*:table/codex-{world}-technology",
+        "arn:aws:dynamodb:us-east-1:*:table/codex-{world}-locations"
+      ]
+    }
+  }
+}
