@@ -19,41 +19,77 @@ import { S, findDuplicateIds, entitySlug } from "./shared.jsx";
 const THEMES = {
   "sci-fi-dark": {
     label: "Sci-Fi Dark", family: "scifi",
-    fonts: { heading: "'Chakra Petch', sans-serif", body: "'Chakra Petch', sans-serif", mono: "'IBM Plex Mono', monospace" },
+    fonts: {
+      heading: "'Chakra Petch', sans-serif",
+      body:    "'Chakra Petch', sans-serif",
+      mono:    "'IBM Plex Mono', monospace",
+    },
     vars: {
-      "--bg-deep":"#050810","--bg-main":"#0a0f1a","--bg-panel":"#080d18","--bg-input":"#060a12",
-      "--bg-hover":"#142238","--bg-selected":"#182840",
-      "--text-primary":"#f0f4ff","--text-body":"#d4e0f0","--text-secondary":"#96b8dc",
-      "--text-muted":"#6a90b8","--text-dim":"#507098","--text-faint":"#3a5878","--text-dimmer":"#2a4868",
-      "--border":"#1e3a60","--border-subtle":"#162535","--border-faint":"#101c28",
-      "--accent":"#47b8e8","--accent-bg":"#47b8e818","--accent-purple":"#c47be8",
-      "--danger":"#e85747","--danger-border":"#5a2020","--danger-bg":"#5a202018",
-      "--success":"#47e89b","--warning":"#e8c547",
-      "--overlay":"rgba(2,4,10,0.9)","--tag-neutral":"#607080",
-      "--cat-political":   "#e8c547",
-      "--cat-technology":  "#47b8e8",
-      "--cat-military":    "#e85747",
-      "--cat-exploration": "#47e89b",
-      "--cat-science":          "#c47be8",
-      "--cat-cultural":    "#e8a247",
-      "--cat-political-soft":   "#e8c54722",
-      "--cat-technology-soft":  "#47b8e822",
-      "--cat-military-soft":    "#e8574722",
-      "--cat-exploration-soft": "#47e89b22",
-      "--cat-science-soft":          "#c47be822",
-      "--cat-cultural-soft":    "#e8a24722",
-      "--tech-propulsion":    "#47c7d8",
-      "--tech-comms":         "#9ba0f0",
-      "--tech-energy":        "#f3a040",
-      "--tech-weapons":       "#e85747",
-      "--tech-starships":     "#b8c0d8",
-      "--tech-materials":     "#88c060",
-      "--tech-propulsion-soft": "#47c7d822",
-      "--tech-comms-soft":      "#9ba0f022",
-      "--tech-energy-soft":     "#f3a04022",
-      "--tech-weapons-soft":    "#e8574722",
-      "--tech-starships-soft":  "#b8c0d822",
-      "--tech-materials-soft":  "#88c06022",
+      "--bg-deep":     "#14171c",
+      "--bg-main":     "#1c2027",
+      "--bg-panel":    "#232830",
+      "--bg-input":    "#0c0f13",
+      "--bg-hover":    "#2a3140",
+      "--bg-selected": "#2e3a4c",
+
+      "--text-primary":   "#eef3f9",
+      "--text-body":      "#c6cfdb",
+      "--text-secondary": "#8a96a4",
+      "--text-muted":     "#6a7280",
+      "--text-dim":       "#525a66",
+      "--text-faint":     "#3d434d",
+      "--text-dimmer":    "#2a2f38",
+
+      "--border":        "#3a4250",
+      "--border-subtle": "#2a3038",
+      "--border-faint":  "#1f242c",
+
+      "--accent":         "#5cc7e8",
+      "--accent-bg":      "#5cc7e818",
+      "--accent-purple":  "#b975ec",
+
+      "--danger":         "#e85a4a",
+      "--danger-border":  "#5a2520",
+      "--danger-bg":      "#5a252018",
+      "--success":        "#7fc04a",
+      "--warning":        "#f5a623",
+
+      "--overlay":        "rgba(8,11,16,0.88)",
+      "--tag-neutral":    "#6a7280",
+
+      "--cat-political":       "#ecd14a",
+      "--cat-technology":      "#4ec6e8",
+      "--cat-military":        "#e85a4a",
+      "--cat-exploration":     "#7fc04a",
+      "--cat-science":         "#b975ec",
+      "--cat-cultural":        "#f5a623",
+
+      "--cat-political-soft":   "#ecd14a22",
+      "--cat-technology-soft":  "#4ec6e822",
+      "--cat-military-soft":    "#e85a4a22",
+      "--cat-exploration-soft": "#7fc04a22",
+      "--cat-science-soft":     "#b975ec22",
+      "--cat-cultural-soft":    "#f5a62322",
+
+      "--tech-propulsion":    "#2eb8a8",
+      "--tech-comms":         "#6c7cf0",
+      "--tech-energy":        "#f57a23",
+      "--tech-weapons":       "#e83a5a",
+      "--tech-starships":     "#5cc7e8",
+      "--tech-materials":     "#a8c850",
+
+      "--tech-propulsion-soft": "#2eb8a822",
+      "--tech-comms-soft":      "#6c7cf022",
+      "--tech-energy-soft":     "#f57a2322",
+      "--tech-weapons-soft":    "#e83a5a22",
+      "--tech-starships-soft":  "#5cc7e822",
+      "--tech-materials-soft":  "#a8c85022",
+
+      "--phosphor":      "#ffb74a",
+      "--phosphor-soft": "#ffb74a30",
+      "--well":          "#0c0f13",
+      "--edge-hi":       "rgba(255,255,255,0.05)",
+      "--edge-lo":       "rgba(0,0,0,0.55)",
     },
   },
   "sci-fi-light": {
@@ -277,6 +313,60 @@ const BASE_CSS = `
     float: left;
     line-height: 0.9;
     padding: 0.18em 0.32em 0 0;
+  }
+
+  /* ── Sci-Fi Dark · Console · physical-hardware surfacing ── */
+  [data-theme="sci-fi-dark"] {
+    background:
+      repeating-linear-gradient(90deg,
+        rgba(255,255,255,0.012) 0 1px,
+        transparent 1px 3px),
+      var(--bg-deep);
+  }
+  [data-theme="sci-fi-dark"] input,
+  [data-theme="sci-fi-dark"] textarea,
+  [data-theme="sci-fi-dark"] select {
+    background: var(--well);
+    border: 1px solid #000;
+    border-radius: 2px;
+    box-shadow:
+      inset 0 1px 3px rgba(0,0,0,0.7),
+      inset 0 -1px 0 var(--edge-hi);
+  }
+  [data-theme="sci-fi-dark"] input:focus,
+  [data-theme="sci-fi-dark"] textarea:focus,
+  [data-theme="sci-fi-dark"] select:focus {
+    outline: none;
+    color: var(--accent);
+    box-shadow:
+      inset 0 1px 3px rgba(0,0,0,0.7),
+      0 0 0 1px var(--accent);
+  }
+  [data-theme="sci-fi-dark"] button {
+    background: linear-gradient(180deg, #3a4250, #232830);
+    border: 1px solid #000;
+    border-radius: 2px;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.1),
+      inset 0 -2px 0 rgba(0,0,0,0.4),
+      0 1px 0 rgba(0,0,0,0.5);
+  }
+  [data-theme="sci-fi-dark"] button[style*="--accent"][style*="background"],
+  [data-theme="sci-fi-dark"] button[style*="background: var(--accent)"] {
+    background: linear-gradient(180deg, #ffd070, var(--phosphor) 55%, #cc8a20);
+    color: rgba(0,0,0,0.82);
+    text-shadow: 0 1px 0 rgba(255,255,255,0.2);
+    border-color: #000;
+  }
+  [data-theme="sci-fi-dark"] > nav {
+    box-shadow:
+      inset 0 1px 0 var(--edge-hi),
+      inset -1px 0 0 var(--edge-hi);
+  }
+  [data-theme="sci-fi-dark"] ::-webkit-scrollbar-thumb {
+    box-shadow:
+      inset 0 1px 0 var(--edge-hi),
+      inset 0 -1px 0 rgba(0,0,0,0.6);
   }
 `;
 
