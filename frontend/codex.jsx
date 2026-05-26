@@ -61,14 +61,14 @@ const THEMES = {
       "--cat-technology":      "#4ec6e8",
       "--cat-military":        "#e85a4a",
       "--cat-exploration":     "#7fc04a",
-      "--cat-science":         "#b975ec",
+      "--cat-science":              "#b975ec",
       "--cat-cultural":        "#f5a623",
 
       "--cat-political-soft":   "#ecd14a22",
       "--cat-technology-soft":  "#4ec6e822",
       "--cat-military-soft":    "#e85a4a22",
       "--cat-exploration-soft": "#7fc04a22",
-      "--cat-science-soft":     "#b975ec22",
+      "--cat-science-soft":          "#b975ec22",
       "--cat-cultural-soft":    "#f5a62322",
 
       "--tech-propulsion":    "#2eb8a8",
@@ -215,9 +215,9 @@ const THEMES = {
       "--bg-hover":    "#2b2317",
       "--bg-selected": "#342916",
 
-      "--text-primary":   "#f3e7cd",
-      "--text-body":      "#ddcfac",
-      "--text-secondary": "#b8a883",
+      "--text-primary":   "#faf1dd",
+      "--text-body":      "#ece0bf",
+      "--text-secondary": "#c8b994",
       "--text-muted":     "#8a7c5b",
       "--text-dim":       "#6c5f44",
       "--text-faint":     "#4e4530",
@@ -245,6 +245,8 @@ const THEMES = {
       "--cat-military":        "#c24a3a",
       "--cat-exploration":     "#8aae64",
       "--cat-science":              "#a878c8",
+      "--cat-arcane":          "#a878c8",
+      "--cat-religious":       "#dcb46c",
       "--cat-cultural":        "#d77b8c",
 
       "--cat-political-soft":   "#3a2c12",
@@ -252,21 +254,35 @@ const THEMES = {
       "--cat-military-soft":    "#341510",
       "--cat-exploration-soft": "#2e3a1d",
       "--cat-science-soft":          "#2e1f37",
+      "--cat-arcane-soft":      "#2e1f37",
+      "--cat-religious-soft":   "#3a2e18",
       "--cat-cultural-soft":    "#3a1d23",
 
       "--tech-propulsion":    "#5a9aa6",
       "--tech-comms":         "#7a82c0",
+      "--tech-communications":"#7a82c0",
       "--tech-energy":        "#e09548",
       "--tech-weapons":       "#a03a2e",
       "--tech-starships":     "#94a8c2",
       "--tech-materials":     "#6e8a52",
+      "--tech-magic":         "#a878c8",
+      "--tech-smithing":      "#c47a3c",
+      "--tech-alchemy":       "#5a9aa6",
+      "--tech-herbalism":     "#8aae64",
+      "--tech-engineering":   "#94a8c2",
 
       "--tech-propulsion-soft": "#1d2a2e",
       "--tech-comms-soft":      "#1f2235",
+      "--tech-communications-soft":"#1f2235",
       "--tech-energy-soft":     "#321f10",
       "--tech-weapons-soft":    "#2d1410",
       "--tech-starships-soft":  "#1f242e",
       "--tech-materials-soft":  "#1f2a17",
+      "--tech-magic-soft":      "#2e1f37",
+      "--tech-smithing-soft":   "#341e0f",
+      "--tech-alchemy-soft":    "#1d2a2e",
+      "--tech-herbalism-soft":  "#2e3a1d",
+      "--tech-engineering-soft":"#1f242e",
     },
   },
 };
@@ -297,6 +313,15 @@ function getContrastText(hex) {
 // ─── Theme CSS ───────────────────────────────────────────────
 const FONT_CSS = `@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=Chakra+Petch:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&family=JetBrains+Mono:wght@400;500;600&family=Cinzel:wght@400;600;700&family=Crimson+Pro:wght@400;600;700&family=Fira+Code:wght@400;500&family=Cormorant+Garamond:wght@400;500;600;700&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap');`;
 const BASE_CSS = `
+  /* Fallbacks for category/tech CSS vars not defined by every theme.
+     Themes that want distinct colors for these can override per-block. */
+  :root {
+    --cat-other: var(--text-muted, #888); --cat-other-soft: var(--bg-hover, #2a2a2a);
+    --tech-transport: var(--tech-propulsion, var(--accent, #888));
+    --tech-transport-soft: var(--tech-propulsion-soft, var(--bg-hover, #2a2a2a));
+    --tech-communications: var(--tech-comms, var(--accent, #888));
+    --tech-communications-soft: var(--tech-comms-soft, var(--bg-hover, #2a2a2a));
+  }
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   ::-webkit-scrollbar{width:6px}
   ::-webkit-scrollbar-track{background:var(--bg-deep)}
@@ -782,12 +807,12 @@ export default function Codex() {
         >
           {theme === "hearthwood" ? (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-              <span style={{ fontFamily: t.fonts.mono, fontSize: 9, letterSpacing: "0.24em", textTransform: "uppercase", color: "var(--warning)" }}>— A Worldbuilder's Index —</span>
+              <span style={{ fontFamily: t.fonts.mono, fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--warning)", whiteSpace: "nowrap" }}>— A Worldbuilder's Index —</span>
               <span style={{ fontFamily: t.fonts.heading, fontWeight: 600, fontSize: 28, letterSpacing: "0.06em", color: "var(--text-primary)", lineHeight: 1 }}>Codex</span>
               <span style={{ position: "relative", width: 90, height: 1, background: "var(--text-muted)", display: "block" }}>
                 <span style={{ position: "absolute", top: -2, left: "50%", transform: "translateX(-50%)", width: 5, height: 5, background: "var(--text-muted)", borderRadius: "50%" }}/>
               </span>
-              <span style={{ fontFamily: t.fonts.mono, fontSize: 9, letterSpacing: "0.24em", textTransform: "uppercase", color: "var(--warning)" }}>Volume the First</span>
+              <span style={{ fontFamily: t.fonts.mono, fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--warning)", whiteSpace: "nowrap" }}>Volume the First</span>
             </div>
           ) : (
             <>

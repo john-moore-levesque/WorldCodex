@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { uid, ImageUpload, MarkdownBody, S, entitySlug, findBySlugOrId } from "./shared.jsx";
+import { uid, ImageUpload, MarkdownBody, S, entitySlug, findBySlugOrId, tagColor } from "./shared.jsx";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -205,12 +205,15 @@ function LoreModal({ entity, lore, allData, apiPost, onSave, onDelete, onClose }
           <div style={S.fieldRow}>
             <label style={S.label}>Tags</label>
             <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:4 }}>
-              {(form.tags||[]).map((t,i) => (
-                <span key={i} style={{ padding:"2px 8px", border:"1px solid var(--border)", borderRadius:3, fontSize:11, color:"var(--text-secondary)", display:"flex", alignItems:"center", gap:4 }}>
-                  {t}
-                  <button onClick={() => set("tags", form.tags.filter((_,j)=>j!==i))} style={{ background:"none", border:"none", color:"var(--text-dim)", cursor:"pointer", fontSize:10, padding:0 }}>✕</button>
-                </span>
-              ))}
+              {(form.tags||[]).map((t,i) => {
+                const c = tagColor(t);
+                return (
+                  <span key={i} style={{ padding:"2px 8px", border:`1px solid ${c.color}`, background:c.soft, borderRadius:3, fontSize:11, color:c.color, display:"flex", alignItems:"center", gap:4 }}>
+                    {t}
+                    <button onClick={() => set("tags", form.tags.filter((_,j)=>j!==i))} style={{ background:"none", border:"none", color:c.color, cursor:"pointer", fontSize:10, padding:0 }}>✕</button>
+                  </span>
+                );
+              })}
             </div>
             <div style={{ display:"flex", gap:4 }}>
               <input value={tagInput} onChange={e => setTagInput(e.target.value)} onKeyDown={e => e.key === "Enter" && (e.preventDefault(), addTag())} style={{ ...S.input, flex:1, fontSize:12 }} placeholder="Add tag…" />
@@ -290,9 +293,10 @@ function LoreTreeRow({ entry, depth, isSelected, isExpanded, onSelect, onEdit, o
         </div>
         <div style={{ display:"flex", gap:6, marginTop:2, alignItems:"center" }}>
           <span style={{ ...S.microTag, color }}>{CANON_ICONS[entry.canonStatus]} {entry.canonStatus}</span>
-          {entry.tags?.length > 0 && entry.tags.slice(0,3).map((t,i) => (
-            <span key={i} style={S.microTag}>{t}</span>
-          ))}
+          {entry.tags?.length > 0 && entry.tags.slice(0,3).map((t,i) => {
+            const c = tagColor(t);
+            return <span key={i} style={{ ...S.microTag, borderColor:c.color, color:c.color, background:c.soft }}>{t}</span>;
+          })}
           {entry.children?.length > 0 && (
             <span style={{ ...S.microTag, color:"var(--text-faint)" }}>{entry.children.length} sub-entr{entry.children.length === 1 ? "y" : "ies"}</span>
           )}
@@ -322,6 +326,24 @@ export default function LoreModule({ lore, onSave, onDelete, allData, onNavigate
   const [showSpeculative, setShowSpeculative] = useState(true);
   const [showRetconned,   setShowRetconned]   = useState(true);
 
+  // Tag filter — empty set means no tag filter (show all). Otherwise show entries with any matching tag.
+  const [selectedTags, setSelectedTags] = useState(new Set());
+  const toggleTag = (t) => setSelectedTags(prev => {
+    const n = new Set(prev);
+    n.has(t) ? n.delete(t) : n.add(t);
+    return n;
+  });
+
+  // All unique tags across all lore (case-insensitive dedupe, original casing preserved by first-seen)
+  const allTags = useMemo(() => {
+    const seen = new Map(); // lower -> original
+    (lore||[]).forEach(e => (e.tags||[]).forEach(t => {
+      const k = String(t).trim().toLowerCase();
+      if (k && !seen.has(k)) seen.set(k, t);
+    }));
+    return Array.from(seen.values()).sort((a,b) => a.localeCompare(b));
+  }, [lore]);
+
   const toggleExpand = (id) => setExpanded(prev => {
     const n = new Set(prev);
     n.has(id) ? n.delete(id) : n.add(id);
@@ -337,30 +359,48 @@ export default function LoreModule({ lore, onSave, onDelete, allData, onNavigate
     return s;
   }, [showConfirmed, showSpeculative, showRetconned]);
 
-  // For search: flatten all lore, filter, then show only matching + their ancestors
+  // For search/tags: flatten all lore, filter, then show only matching + their ancestors
   const filteredLore = useMemo(() => {
     const all = lore || [];
     const statusFiltered = all.filter(e => visibleStatuses.has(e.canonStatus));
-    if (!search.trim()) return statusFiltered;
-    const q = search.toLowerCase();
-    const matched = new Set(statusFiltered.filter(e =>
-      e.title?.toLowerCase().includes(q) || e.body?.toLowerCase().includes(q) || e.tags?.some(t => t.toLowerCase().includes(q))
-    ).map(e => e.id));
-    // include ancestors of matched entries so tree structure is preserved
+
+    // Tag filter: if any tags selected, require entry to have at least one (case-insensitive)
+    const selLower = new Set(Array.from(selectedTags).map(t => t.toLowerCase()));
+    const tagFiltered = selLower.size === 0
+      ? statusFiltered
+      : statusFiltered.filter(e => (e.tags||[]).some(t => selLower.has(String(t).toLowerCase())));
+
+    const matchesSearch = (e) => {
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return e.title?.toLowerCase().includes(q) || e.body?.toLowerCase().includes(q) || e.tags?.some(t => t.toLowerCase().includes(q));
+    };
+    const matched = new Set(tagFiltered.filter(matchesSearch).map(e => e.id));
+
+    // Include ancestors so tree structure is preserved. Walk up the full chain, not just one level.
+    const byId = new Map(all.map(e => [e.id, e]));
     const withAncestors = new Set(matched);
-    all.forEach(e => { if (matched.has(e.id) && e.parent) withAncestors.add(e.parent); });
-    return statusFiltered.filter(e => withAncestors.has(e.id));
-  }, [lore, search, visibleStatuses]);
+    matched.forEach(id => {
+      let cur = byId.get(id);
+      while (cur && cur.parent) {
+        if (withAncestors.has(cur.parent)) break;
+        withAncestors.add(cur.parent);
+        cur = byId.get(cur.parent);
+      }
+    });
+    // Keep ancestors visible even if they fail status/tag filters — otherwise the tree breaks.
+    return all.filter(e => withAncestors.has(e.id));
+  }, [lore, search, visibleStatuses, selectedTags]);
 
   const tree = useMemo(() => buildTree(filteredLore), [filteredLore]);
 
-  // Auto-expand all when searching
+  // Auto-expand all when searching or filtering by tag
   const effectiveExpanded = useMemo(() => {
-    if (search.trim()) {
+    if (search.trim() || selectedTags.size > 0) {
       return new Set((lore||[]).map(e => e.id));
     }
     return expanded;
-  }, [search, lore, expanded]);
+  }, [search, selectedTags, lore, expanded]);
 
   const flat = useMemo(() => flattenVisible(tree, effectiveExpanded), [tree, effectiveExpanded]);
 
@@ -394,7 +434,10 @@ export default function LoreModule({ lore, onSave, onDelete, allData, onNavigate
           </div>
           {selected.tags?.length > 0 && (
             <div style={{ display:"flex", gap:4, flexWrap:"wrap", marginTop:8 }}>
-              {selected.tags.map((t,i) => <span key={i} style={{ ...S.microTag, border:"1px solid var(--border)", padding:"2px 6px", borderRadius:3 }}>{t}</span>)}
+              {selected.tags.map((t,i) => {
+                const c = tagColor(t);
+                return <span key={i} style={{ ...S.microTag, border:`1px solid ${c.color}`, background:c.soft, color:c.color, padding:"2px 6px", borderRadius:3 }}>{t}</span>;
+              })}
             </div>
           )}
           {selected.body && <MarkdownBody style={{ lineHeight:1.7, marginTop:14 }}>{selected.body}</MarkdownBody>}
@@ -450,6 +493,30 @@ export default function LoreModule({ lore, onSave, onDelete, allData, onNavigate
           );
         })}
       </div>
+      {allTags.length > 0 && (
+        <div style={{ padding:"8px 16px", display:"flex", gap:6, flexWrap:"wrap", borderBottom:"1px solid var(--border-faint)", alignItems:"center" }}>
+          <span style={{ fontSize:10, color:"var(--text-dim)", fontFamily:"var(--font-mono)", letterSpacing:1, textTransform:"uppercase", marginRight:4 }}>Tags:</span>
+          {allTags.map(t => {
+            const on = selectedTags.has(t);
+            const c = tagColor(t);
+            return (
+              <button key={t} onClick={() => toggleTag(t)} style={{
+                ...S.filterChip, fontSize:11, whiteSpace:"nowrap",
+                borderColor: on ? c.color : "var(--border)",
+                color: on ? c.color : "var(--text-dim)",
+                background: on ? c.soft : "transparent",
+              }}>
+                {t}
+              </button>
+            );
+          })}
+          {selectedTags.size > 0 && (
+            <button onClick={() => setSelectedTags(new Set())} style={{ ...S.filterChip, fontSize:11, whiteSpace:"nowrap", borderColor:"var(--border)", color:"var(--text-dim)", background:"transparent" }}>
+              clear
+            </button>
+          )}
+        </div>
+      )}
       <div style={{ flex:1, minHeight:0, overflowY:"auto", padding:"4px 16px" }}>
         {flat.length === 0
           ? <div style={S.empty}>{(lore||[]).length === 0 ? "No lore entries yet." : "No entries match filters."}</div>

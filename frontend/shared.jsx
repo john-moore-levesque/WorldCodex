@@ -61,33 +61,77 @@ export function findDuplicateIds(arrays) {
 }
 
 // ─── Constants ───────────────────────────────────────────────
-export const EVENT_CATEGORIES = [
-  { id: "political",   label: "Political",          color: "var(--cat-political)",   soft: "var(--cat-political-soft)" },
-  { id: "technology",  label: "Technology",         color: "var(--cat-technology)",  soft: "var(--cat-technology-soft)" },
-  { id: "military",    label: "Military",           color: "var(--cat-military)",    soft: "var(--cat-military-soft)" },
-  { id: "exploration", label: "Exploration",        color: "var(--cat-exploration)", soft: "var(--cat-exploration-soft)" },
-  { id: "science",     label: "Science",            color: "var(--cat-science)",     soft: "var(--cat-science-soft)" },
-  { id: "cultural",    label: "Cultural",           color: "var(--cat-cultural)",    soft: "var(--cat-cultural-soft)" },
-];
+// World-specific taxonomies (event categories, location types, etc.) are
+// configurable via VITE_* env vars so themes can be world-agnostic. Defaults
+// here are genre-neutral; per-world .env files override with domain terms.
+function parseList(envVal, fallback) {
+  if (!envVal) return fallback;
+  const out = String(envVal).split(",").map(s => s.trim()).filter(Boolean);
+  return out.length ? out : fallback;
+}
 
-export const FACTION_TYPES = ["government","corporation","military","religious","insurgent","criminal","other"];
+// Parse "id:Label,id:Label" or "id,id" (label defaults to titlecased id).
+function parseLabeledList(envVal, fallback) {
+  if (!envVal) return fallback;
+  const out = String(envVal).split(",").map(s => s.trim()).filter(Boolean).map(pair => {
+    const [id, ...rest] = pair.split(":");
+    const cleanId = id.trim();
+    const label = rest.join(":").trim() || cleanId.replace(/[-_]/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    return { id: cleanId, label };
+  });
+  return out.length ? out : fallback;
+}
+
+const ENV = (typeof import.meta !== "undefined" && import.meta.env) || {};
+
+export const EVENT_CATEGORIES = parseLabeledList(ENV.VITE_EVENT_CATEGORIES, [
+  { id: "political",   label: "Political"   },
+  { id: "technology",  label: "Technology"  },
+  { id: "military",    label: "Military"    },
+  { id: "exploration", label: "Exploration" },
+  { id: "cultural",    label: "Cultural"    },
+  { id: "other",       label: "Other"       },
+]).map(c => ({ ...c, color: `var(--cat-${c.id})`, soft: `var(--cat-${c.id}-soft)` }));
+
+export const FACTION_TYPES = parseList(ENV.VITE_FACTION_TYPES,
+  ["government","military","religious","organization","criminal","other"]);
 export const SPECIES_STATUSES = ["extant","endangered","extinct","unknown"];
 export const FACTION_STATUSES = ["active","dissolved","underground","unknown"];
-export const TECH_CATEGORIES = ["infrastructure","propulsion","weapons","energy","computing","biotech","materials","communications","other","starships"];
+
+export const TECH_SUBCATEGORIES = parseLabeledList(ENV.VITE_TECH_SUBCATEGORIES, [
+  { id: "transport",      label: "Transport"      },
+  { id: "communications", label: "Communications" },
+  { id: "energy",         label: "Energy"         },
+  { id: "weapons",        label: "Weapons"        },
+  { id: "materials",      label: "Materials"      },
+]).map(s => ({ ...s, color: `var(--tech-${s.id})`, soft: `var(--tech-${s.id}-soft)` }));
+
+export const TECH_CATEGORIES = parseList(ENV.VITE_TECH_CATEGORIES,
+  ["infrastructure","weapons","energy","materials","communications","transport","computing","biotech","other"]);
 export const TECH_STATUSES = ["theoretical","experimental","operational","widespread","obsolete","lost"];
 
-export const TECH_SUBCATEGORIES = [
-  { id: "propulsion",     label: "Propulsion",     color: "var(--tech-propulsion)",  soft: "var(--tech-propulsion-soft)" },
-  { id: "communications", label: "Communications", color: "var(--tech-comms)",       soft: "var(--tech-comms-soft)" },
-  { id: "energy",         label: "Energy",         color: "var(--tech-energy)",      soft: "var(--tech-energy-soft)" },
-  { id: "weapons",        label: "Weapons",        color: "var(--tech-weapons)",     soft: "var(--tech-weapons-soft)" },
-  { id: "starships",      label: "Starships",      color: "var(--tech-starships)",   soft: "var(--tech-starships-soft)" },
-  { id: "materials",      label: "Materials",      color: "var(--tech-materials)",   soft: "var(--tech-materials-soft)" },
-];
 export const TECH_BY_ID = Object.fromEntries(TECH_SUBCATEGORIES.map(t => [t.id, t]));
-export const LOCATION_TYPES = ["star-system","planet","moon","station","city","region","vessel","compartment","other"];
+
+// Tag palette built from the active event + tech-sub categories, so it stays
+// in sync with whatever the world defines.
+export const TAG_PALETTE = [
+  ...EVENT_CATEGORIES.map(c => ({ color: c.color, soft: c.soft })),
+  ...TECH_SUBCATEGORIES.map(c => ({ color: c.color, soft: c.soft })),
+];
+
+export function tagColor(tag) {
+  const s = String(tag || "").trim().toLowerCase();
+  if (!s || !TAG_PALETTE.length) return { color: "var(--text-muted)", soft: "var(--bg-hover)" };
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return TAG_PALETTE[h % TAG_PALETTE.length];
+}
+
+export const LOCATION_TYPES = parseList(ENV.VITE_LOCATION_TYPES,
+  ["region","settlement","structure","landmark","vessel","other"]);
 export const LOCATION_STATUSES = ["inhabited","uninhabited","contested","destroyed","unknown"];
-export const CONNECTION_TYPES = ["warp-lane","trade-route","political-border","orbit","hyperspace","other"];
+export const CONNECTION_TYPES = parseList(ENV.VITE_CONNECTION_TYPES,
+  ["route","border","passage","other"]);
 export const STORY_STATUSES = ["draft","in-progress","complete"];
 export const STORY_RELATION_TYPES = ["sequel","prequel","sidequel"];
 
