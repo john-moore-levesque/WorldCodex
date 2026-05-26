@@ -285,6 +285,91 @@ const THEMES = {
       "--tech-engineering-soft":"#1f242e",
     },
   },
+  "bracken": {
+    label: "Bracken", family: "fantasy",
+    fonts: {
+      heading: "'Cormorant Garamond', 'Cinzel', serif",
+      body:    "'EB Garamond', Georgia, serif",
+      mono:    "'JetBrains Mono', 'Fira Code', ui-monospace, monospace",
+    },
+    vars: {
+      "--bg-deep":     "#f6ecd0",
+      "--bg-main":     "#efe1be",
+      "--bg-panel":    "#e8d6ab",
+      "--bg-input":    "#faf2da",
+      "--bg-hover":    "#dec79a",
+      "--bg-selected": "#cdb27a",
+
+      "--text-primary":   "#2a1d0a",
+      "--text-body":      "#4b3818",
+      "--text-secondary": "#6f5527",
+      "--text-muted":     "#8e7239",
+      "--text-dim":       "#aa8e55",
+      "--text-faint":     "#c9b07a",
+      "--text-dimmer":    "#ebdcb1",
+
+      "--border":         "#aa8e55",
+      "--border-subtle":  "#c9b07a",
+      "--border-faint":   "#ebdcb1",
+
+      "--accent":         "#9a4519",
+      "--accent-bg":      "#f0d4be",
+      "--accent-purple":  "#6e3a5e",
+
+      "--danger":         "#7a2418",
+      "--danger-border":  "#c8907e",
+      "--danger-bg":      "#e8c5b8",
+      "--success":        "#5a6e22",
+      "--warning":        "#8a5a1c",
+
+      "--overlay":        "rgba(40, 24, 6, 0.55)",
+      "--tag-neutral":    "#8e7239",
+
+      "--cat-political":       "#b08218",
+      "--cat-technology":      "#a85320",
+      "--cat-military":        "#7a2418",
+      "--cat-exploration":     "#6a7a28",
+      "--cat-science":         "#6e3a5e",
+      "--cat-arcane":          "#6e3a5e",
+      "--cat-religious":       "#8a5a1c",
+      "--cat-cultural":        "#a8324a",
+
+      "--cat-political-soft":   "#f1e1a8",
+      "--cat-technology-soft":  "#f0d2af",
+      "--cat-military-soft":    "#ecc5b8",
+      "--cat-exploration-soft": "#dde0b0",
+      "--cat-science-soft":     "#e3cdda",
+      "--cat-arcane-soft":      "#e3cdda",
+      "--cat-religious-soft":   "#f0dca5",
+      "--cat-cultural-soft":    "#efcad0",
+
+      "--tech-propulsion":    "#3a7a86",
+      "--tech-comms":         "#4a4e9a",
+      "--tech-communications":"#4a4e9a",
+      "--tech-energy":        "#a85320",
+      "--tech-weapons":       "#6a1e14",
+      "--tech-starships":     "#6a7a8e",
+      "--tech-materials":     "#5a6e22",
+      "--tech-magic":         "#6e3a5e",
+      "--tech-smithing":      "#a85320",
+      "--tech-alchemy":       "#3a7a86",
+      "--tech-herbalism":     "#6a7a28",
+      "--tech-engineering":   "#6a7a8e",
+
+      "--tech-propulsion-soft": "#cfe0e2",
+      "--tech-comms-soft":      "#d8d9ed",
+      "--tech-communications-soft":"#d8d9ed",
+      "--tech-energy-soft":     "#f0d2af",
+      "--tech-weapons-soft":    "#e0bcb4",
+      "--tech-starships-soft":  "#dde0e6",
+      "--tech-materials-soft":  "#dde0b0",
+      "--tech-magic-soft":      "#e3cdda",
+      "--tech-smithing-soft":   "#f0d2af",
+      "--tech-alchemy-soft":    "#cfe0e2",
+      "--tech-herbalism-soft":  "#dde0b0",
+      "--tech-engineering-soft":"#dde0e6",
+    },
+  },
 };
 
 // ─── Constants ───────────────────────────────────────────────
@@ -805,7 +890,7 @@ export default function Codex() {
           onMouseEnter={e => e.currentTarget.style.background = "var(--bg-hover)"}
           onMouseLeave={e => e.currentTarget.style.background = "transparent"}
         >
-          {theme === "hearthwood" ? (
+          {t.family === "fantasy" ? (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
               <span style={{ fontFamily: t.fonts.mono, fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--warning)", whiteSpace: "nowrap" }}>— A Worldbuilder's Index —</span>
               <span style={{ fontFamily: t.fonts.heading, fontWeight: 600, fontSize: 28, letterSpacing: "0.06em", color: "var(--text-primary)", lineHeight: 1 }}>Codex</span>

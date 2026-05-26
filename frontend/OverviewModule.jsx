@@ -93,7 +93,7 @@ export default function OverviewModule({ overview, onChange, allData, onNavigate
           <div style={{ fontFamily:"var(--font-body)", fontSize:15, color:"var(--text-body)", lineHeight:1.8, whiteSpace:"pre-wrap", marginBottom:32 }}>{overview.body}</div>
         ) : (
           <div style={{ padding:"48px 24px", border:"1px dashed var(--border)", borderRadius:8, textAlign:"center", marginBottom:32 }}>
-            <p style={{ color:"var(--text-faint)", fontFamily:"var(--font-mono)", fontSize:13, marginBottom:12 }}>This is your universe's front page.</p>
+            <p style={{ color:"var(--text-faint)", fontFamily:"var(--font-mono)", fontSize:13, marginBottom:12 }}>This is your world's front page.</p>
             <p style={{ color:"var(--text-dimmer)", fontFamily:"var(--font-mono)", fontSize:12, lineHeight:1.6 }}>Click "Edit" to set the title, describe the premise, and make it yours.</p>
           </div>
         )}
